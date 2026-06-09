@@ -83,6 +83,17 @@ class PickAndTransferPolicy(BasePolicy):
 
         meet_xyz = np.array([0, 0.5, 0.25])
 
+        """
+        左夹爪完整过程：
+        区间	起点	终点	gripper 值
+        0 → 100	gripper=0	gripper=1	线性从 0 插值到 1
+        100 → 260	gripper=1	gripper=1	保持 1（张开）
+        260 → 310	gripper=1	gripper=0	线性从 1 插值到 0
+        310 → 360	gripper=0	gripper=0	保持 0（闭合）
+        360 → 400	gripper=0	gripper=0	保持 0（闭合）
+        所以 0→100 这段也是插值的（从闭合渐渐张开），并不是瞬间跳变到 1。
+        这也就解释了为什么之前图里 command 曲线在某些区间是斜线而不是阶跃。
+        """
         self.left_trajectory = [
             {"t": 0, "xyz": init_mocap_pose_left[:3], "quat": init_mocap_pose_left[3:], "gripper": 0}, # sleep
             {"t": 100, "xyz": meet_xyz + np.array([-0.1, 0, -0.02]), "quat": meet_left_quat.elements, "gripper": 1}, # approach meet position

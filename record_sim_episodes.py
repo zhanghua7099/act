@@ -74,16 +74,16 @@ def main(args):
         # setup the environment
         env = make_ee_sim_env(task_name)    # 创建EE空间的环境
         ts = env.reset()                    # 初始化环境
-        episode = [ts]
+        episode = [ts]    # 1 个（初始状态）
         policy = policy_cls(inject_noise)
         # setup plotting
         if onscreen_render:
             ax = plt.subplot()
             plt_img = ax.imshow(ts.observation['images'][render_cam_name])
             plt.ion()
-        for step in range(episode_len):
+        for step in range(episode_len):    # 追加400个时间步的数据
             action = policy(ts)    # 根据当前的环境状态ts，计算EE空间的动作action
-            ts = env.step(action)  # 执行动作action，得到新的环境状态ts
+            ts = env.step(action)  # 执行动作action，得到新的环境状态ts。注意，这里执行的是夹爪的物理宽度。
             episode.append(ts)     # 将新的环境状态ts记录到episode列表
             if onscreen_render:
                 plt_img.set_data(ts.observation['images'][render_cam_name])
@@ -98,12 +98,33 @@ def main(args):
             print(f"{episode_idx=} Failed")
         
         # 提取并修改刚才运行过的episode中的数据ts
-        joint_traj = [ts.observation['qpos'] for ts in episode]
+        joint_traj = [ts.observation['qpos'] for ts in episode]    # 此时，这个joint_traj有401个ts
         # replace gripper pose with gripper control
         gripper_ctrl_traj = [ts.observation['gripper_ctrl'] for ts in episode]
+
+        """
+        a = [1, 2, 3]
+        b = ['x', 'y', 'z']
+        # 同时遍历两个列表，以最短的列表长度为准
+        for x, y in zip(a, b):
+            print(x, y)
+        """
+        """
+        a = [[1, 2, 3], [4, 5, 6]]
+        # 这里的x,只是指向a中每个元素的引用reference。
+        for x in a:
+            x[0] = 999  # 修改了 x 指向的列表内容
+        此时,a的内容也被修改了,因为x和a中的元素指向同一个列表对象。
+        print(a)  # 输出: [[999, 2, 3], [999, 5, 6]]
+        但如果是
+        for x in a:
+            x = [999]    # 重新绑定变量名x到一个新的列表对象
+        此时只是将x指向新的列表对象,而a中的元素不会变。
+        """
         for joint, ctrl in zip(joint_traj, gripper_ctrl_traj):
-            left_ctrl = PUPPET_GRIPPER_POSITION_NORMALIZE_FN(ctrl[0])
+            left_ctrl = PUPPET_GRIPPER_POSITION_NORMALIZE_FN(ctrl[0])    # 夹爪宽度归一化到[0,1]的范围内
             right_ctrl = PUPPET_GRIPPER_POSITION_NORMALIZE_FN(ctrl[2])
+            print(f'{ctrl[0]}, {left_ctrl}')
             joint[6] = left_ctrl
             joint[6+7] = right_ctrl
 
@@ -120,12 +141,13 @@ def main(args):
         BOX_POSE[0] = subtask_info # make sure the sim_env has the same object configurations as ee_sim_env
         ts = env.reset()
 
-        episode_replay = [ts]
+        episode_replay = [ts]    # 1 个（初始状态）
         # setup plotting
         if onscreen_render:
             ax = plt.subplot()
             plt_img = ax.imshow(ts.observation['images'][render_cam_name])
             plt.ion()
+        # 这里回放joint_traj中共有401个ts
         for t in range(len(joint_traj)): # note: this will increase episode length by 1
             action = joint_traj[t]
             ts = env.step(action)
@@ -133,7 +155,7 @@ def main(args):
             if onscreen_render:
                 plt_img.set_data(ts.observation['images'][render_cam_name])
                 plt.pause(0.02)
-
+        # 循环结束后，episode_replay中共有402个ts
         episode_return = np.sum([ts.reward for ts in episode_replay[1:]])
         episode_max_reward = np.max([ts.reward for ts in episode_replay[1:]])
         if episode_max_reward == env.task.max_reward:
@@ -164,10 +186,21 @@ def main(args):
         for cam_name in camera_names:
             data_dict[f'/observations/images/{cam_name}'] = []
 
+        # 运行至此，joint_traj中共有401个动作，episode_replay中共有402个ts
+        
         # because the replaying, there will be eps_len + 1 actions and eps_len + 2 timesteps
         # truncate here to be consistent
         joint_traj = joint_traj[:-1]
         episode_replay = episode_replay[:-1]
+        
+        # 截断后，共有400个动作joint_traj和401个观测到的状态episode_replay
+        """
+        重放的逻辑：
+        episode_replay[0]  →  执行 joint_traj[0] →  episode_replay[1]
+        episode_replay[1]  →  执行 joint_traj[1] →  episode_replay[2]
+        ...
+        episode_replay[t]  →  执行 joint_traj[t] →  episode_replay[t+1]
+        """
 
         # len(joint_traj) i.e. actions: max_timesteps
         # len(episode_replay) i.e. time steps: max_timesteps + 1
