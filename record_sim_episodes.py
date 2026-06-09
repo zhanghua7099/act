@@ -33,6 +33,14 @@ def main(args):
     if not os.path.isdir(dataset_dir):
         os.makedirs(dataset_dir, exist_ok=True)
 
+    """
+    # episode_len用来控制每个episode的长度。即每个episode包含多少个时间步的数据。
+    # /observations/qpos      → 400个关节位置向量
+    # /observations/qvel      → 400个关节速度向量
+    # /action                 → 400个动作向量
+    # /observations/images/cam0  → 400张摄像头0的图像
+    # /observations/images/cam1  → 400张摄像头1的图像
+    """
     episode_len = SIM_TASK_CONFIGS[task_name]['episode_len']
     camera_names = SIM_TASK_CONFIGS[task_name]['camera_names']
     if task_name == 'sim_transfer_cube_scripted':
@@ -41,14 +49,31 @@ def main(args):
         policy_cls = InsertionPolicy
     else:
         raise NotImplementedError
+    
+    """
+    # 整体流程图示例
+    # 第一部分(EE空间):
+    # make_ee_sim_env → 运行脚本策略 → 得到 episode
+    #                                         ↓
+    #                         提取 joint_traj(关节轨迹)
+    #                                         ↓
+    # 第二部分(关节空间):
+    # make_sim_env → 重放 joint_traj → 得到 episode_replay
+    # (replay 就是这里)
+    #                                         ↓
+    #                         保存 episode_replay 到HDF5(训练数据)
+    # 
+    # EE空间的动作成功 ≠ 关节空间也能成功
+    # 需要replay来验证可复现性。因此这个脚本验证了两次。
+    """
 
     success = []
     for episode_idx in range(num_episodes):
         print(f'{episode_idx=}')
         print('Rollout out EE space scripted policy')
         # setup the environment
-        env = make_ee_sim_env(task_name)
-        ts = env.reset()
+        env = make_ee_sim_env(task_name)    # 创建EE空间的环境
+        ts = env.reset()                    # 初始化环境
         episode = [ts]
         policy = policy_cls(inject_noise)
         # setup plotting
@@ -57,9 +82,9 @@ def main(args):
             plt_img = ax.imshow(ts.observation['images'][render_cam_name])
             plt.ion()
         for step in range(episode_len):
-            action = policy(ts)
-            ts = env.step(action)
-            episode.append(ts)
+            action = policy(ts)    # 根据当前的环境状态ts，计算EE空间的动作action
+            ts = env.step(action)  # 执行动作action，得到新的环境状态ts
+            episode.append(ts)     # 将新的环境状态ts记录到episode列表
             if onscreen_render:
                 plt_img.set_data(ts.observation['images'][render_cam_name])
                 plt.pause(0.002)
@@ -71,7 +96,8 @@ def main(args):
             print(f"{episode_idx=} Successful, {episode_return=}")
         else:
             print(f"{episode_idx=} Failed")
-
+        
+        # 提取并修改刚才运行过的episode中的数据ts
         joint_traj = [ts.observation['qpos'] for ts in episode]
         # replace gripper pose with gripper control
         gripper_ctrl_traj = [ts.observation['gripper_ctrl'] for ts in episode]
@@ -116,7 +142,7 @@ def main(args):
         else:
             success.append(0)
             print(f"{episode_idx=} Failed")
-
+        # 这里，如果执行成功，则意味着joint_traj是OK的，后续将会写入到HDF5中。
         plt.close()
 
         """
@@ -147,8 +173,8 @@ def main(args):
         # len(episode_replay) i.e. time steps: max_timesteps + 1
         max_timesteps = len(joint_traj)
         while joint_traj:
-            action = joint_traj.pop(0)
-            ts = episode_replay.pop(0)
+            action = joint_traj.pop(0)    # 从joint_traj中依次取出动作action
+            ts = episode_replay.pop(0)    # 从episode_replay中依次取出环境状态ts
             data_dict['/observations/qpos'].append(ts.observation['qpos'])
             data_dict['/observations/qvel'].append(ts.observation['qvel'])
             data_dict['/action'].append(action)
@@ -158,6 +184,19 @@ def main(args):
         # HDF5
         t0 = time.time()
         dataset_path = os.path.join(dataset_dir, f'episode_{episode_idx}')
+
+        """
+        # HDF5文件格式示例
+        # with h5py.File('example.h5', 'w') as f:
+        #     grp = f.create_group('my_group')
+        #     grp.create_dataset('dataset1', data=np.arange(5))
+        
+        # 执行代码后，会创建层级结构
+        # / (File)
+        # └── my_group (Group)
+        #     └── dataset1 (Dataset)
+        """
+
         with h5py.File(dataset_path + '.hdf5', 'w', rdcc_nbytes=1024 ** 2 * 2) as root:
             root.attrs['sim'] = True
             obs = root.create_group('observations')
@@ -170,10 +209,27 @@ def main(args):
             qpos = obs.create_dataset('qpos', (max_timesteps, 14))
             qvel = obs.create_dataset('qvel', (max_timesteps, 14))
             action = root.create_dataset('action', (max_timesteps, 14))
-
+            """
+            # data_dict字典数据的读取示例
+            # for name, array in data_dict.items():
+            #     输出data的键为name,值为array
+            #     print(name, array)
+            """
             for name, array in data_dict.items():
+                # root[name] 是一个数据集
+                # [ ... ] 选择整个数据集
+                # = array 把数据集内容替换为 data_dict 中的数组
                 root[name][...] = array
         print(f'Saving: {time.time() - t0:.1f} secs\n')
+        """
+        # 最终HDF5文件结构示例
+        # episode_0.hdf5
+        # ├─ observations/
+        # │  ├─ qpos       (400个关节位置)
+        # │  ├─ qvel       (400个关节速度)
+        # │  └─ images/    (400张多摄像头图像)
+        # └─ action        (400个动作命令)  ← 被写入了
+        """
 
     print(f'Saved to {dataset_dir}')
     print(f'Success: {np.sum(success)} / {len(success)}')

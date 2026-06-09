@@ -48,6 +48,7 @@ class BasePolicy:
         next_right_waypoint = self.right_trajectory[0]
 
         # interpolate between waypoints to obtain current pose and gripper command
+        # 获得控制指令，即末端的Pose和夹爪开合程度
         left_xyz, left_quat, left_gripper = self.interpolate(self.curr_left_waypoint, next_left_waypoint, self.step_count)
         right_xyz, right_quat, right_gripper = self.interpolate(self.curr_right_waypoint, next_right_waypoint, self.step_count)
 

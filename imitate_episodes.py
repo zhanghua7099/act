@@ -21,6 +21,28 @@ from sim_env import BOX_POSE
 import IPython
 e = IPython.embed
 
+"""
+训练时输入/输出
+输入：
+    qpos — 关节位置状态 (shape: batch_size × seq_len × 14)
+    image — 多摄像头图像 (shape: batch_size × num_cameras × 3 × H × W)
+    actions — 目标动作序列 (shape: batch_size × chunk_size × 14)
+    is_pad — 序列padding标志 (shape: batch_size × chunk_size)
+输出： 损失字典
+    ACT: {'l1': L1损失, 'kl': KL散度, 'loss': 加权总损失}
+    CNNMLP: {'mse': MSE损失, 'loss': MSE损失}
+
+
+推理时输入/输出
+输入：
+    qpos — 当前关节位置 (shape: 1 × 1 × 14)
+    image — 当前观测图像 (shape: 1 × num_cameras × 3 × H × W)
+输出：
+    a_hat — 预测动作
+    ACT: (1 × chunk_size × 14) — 预测未来chunk_size步的动作
+    CNNMLP: (1 × 1 × 14) — 预测下一步的动作
+"""
+
 def main(args):
     set_seed(1)
     # command line parameters
